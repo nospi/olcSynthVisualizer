@@ -47,6 +47,7 @@ FTYPE** dVisMemory = nullptr;
 int nVisPhase = 0;
 
 
+
 FTYPE ProcessChannel(int nChannel, FTYPE dTime)
 {
     unique_lock<mutex> lm(muxNotes);
@@ -56,10 +57,13 @@ FTYPE ProcessChannel(int nChannel, FTYPE dTime)
         bool bNoteFinished = false;
         FTYPE dSound = 0.0;
         if (n.channel != nullptr)
-            dSound = instrument.sound(dTime, n, bNoteFinished);
+            dSound = n.channel->sound(dTime, n, bNoteFinished);
         dMixedOutput += dSound;
         if (bNoteFinished)
+        {
             n.active = false;
+            n.channel->env.state = synth::adsr_state::inactive;
+        }
     }
     safe_remove<std::vector<synth::note>>(vNotes, [](synth::note const& item) { return item.active; });
     return dMixedOutput * 0.2;
@@ -194,23 +198,27 @@ public:
         std::string sHPFStatus          = "O) HPF: " + std::string(bHpfEnabled ? "ON" : "OFF");
         std::string sLPFStatus          = "P) LPF: " + std::string(bLpfEnabled ? "ON" : "OFF");
         std::string sVolume             = "Volume: " + to_string(instrument.dVolume);
+        std::string sOctave             = "Octave: " + std::to_string(nNoteOffset / 12) + " Total Offset: " + std::to_string(nNoteOffset);
+        std::string sHarmonics          = "Harmonics: " + std::to_string(instrument.nHarmonics);
 
-        DrawString({ 10, 10 }, sNotes);
+        DrawString({ 10, ScreenHeight() - 20 }, sNotes);
 
         using wf = wavegen::WaveFunction;
-        DrawString({ 10, 30 }, sSin, instrument.function == wf::SINE ? olc::WHITE : olc::GREY);
-        DrawString({ 10 + 100 - (int)sSaw.length(), 30 }, sSaw, instrument.function == wf::SAWTOOTH ? olc::WHITE : olc::GREY);
-        DrawString({ 10 + 200 - (int)sSqr.length(), 30 }, sSqr, instrument.function == wf::SQUARE ? olc::WHITE : olc::GREY);
-        DrawString({ 10 + 300 - (int)sTri.length(), 30 }, sTri, instrument.function == wf::TRIANGLE ? olc::WHITE : olc::GREY);
+        DrawString({ 10, 10 }, sSin, instrument.function == wf::SINE ? olc::WHITE : olc::GREY);
+        DrawString({ 110, 10 }, sSaw, instrument.function == wf::SAWTOOTH ? olc::WHITE : olc::GREY);
+        DrawString({ 210, 10 }, sSqr, instrument.function == wf::SQUARE ? olc::WHITE : olc::GREY);
+        DrawString({ 310, 10 }, sTri, instrument.function == wf::TRIANGLE ? olc::WHITE : olc::GREY);
         
-        DrawString({ 10, 50 }, sMonoDelayStatus, bMonoDelayEnabled ? olc::WHITE : olc::GREY);
-        DrawString({ 10 + 200, 50 }, sStereoDelayStatus, bStereoDelayEnabled ? olc::WHITE : olc::GREY);
-        DrawString({ 10, 70 }, sHPFStatus, bHpfEnabled ? olc::WHITE : olc::GREY);
-        DrawString({ 10 + 200, 70 }, sLPFStatus, bLpfEnabled ? olc::WHITE : olc::GREY);
-        DrawString({ 10, 90 }, sVolume);
+        DrawString({ 10, 30 }, sMonoDelayStatus, bMonoDelayEnabled ? olc::WHITE : olc::GREY);
+        DrawString({ 10 + 200, 30 }, sStereoDelayStatus, bStereoDelayEnabled ? olc::WHITE : olc::GREY);
+        DrawString({ 10, 50 }, sHPFStatus, bHpfEnabled ? olc::WHITE : olc::GREY);
+        DrawString({ 10 + 200, 50 }, sLPFStatus, bLpfEnabled ? olc::WHITE : olc::GREY);
+        
+        DrawString({ (int)(ScreenWidth() - sVolume.length() * 8 - 10), 10 }, sVolume);
+        DrawString({ (int)(ScreenWidth() - sOctave.length() * 8 - 10), 30 }, sOctave);
 
         if (instrument.function != wf::SINE)
-            DrawString({ 10, 110 }, "Harmonics: " + std::to_string(instrument.nHarmonics));
+            DrawString({ (int)(ScreenWidth() - sHarmonics.length() * 8 - 10), 50 }, sHarmonics);
 
         return !(GetKey(olc::ESCAPE).bPressed);
     }
@@ -307,17 +315,18 @@ public:
                     if (noteFound->off > noteFound->on)
                     {
                         // key pressed again during release phase
-                        noteFound->on = dTimeNow - 0.1;
+                        noteFound->on = dTimeNow;
                         noteFound->active = true;
                     }
                 }
-                else if (GetKey(vKeys[k]).bReleased)
-                {
-                    // key has been released, so switch off..
-                    if (noteFound->off < noteFound->on)
-                        noteFound->off = dTimeNow;
-                }
             }
+
+            // double check notes outside of the current key ids
+            for (auto& n : vNotes)
+                if (!GetKey(vKeys[n.id - n.offset]).bHeld)
+                    if (n.off < n.on)
+                        n.off = dTimeNow;
+
             muxNotes.unlock();
         }
         return true;
