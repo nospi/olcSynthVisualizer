@@ -1,6 +1,8 @@
 # Synth
 Made with [olcNoiseMaker](https://github.com/OneLoneCoder/synth) and [olcPixelGameEngine](https://github.com/OneLoneCoder/olcPixelGameEngine).
 
+Now includes FFT visualization mode!
+
 ## Dependencies
 - [olcPixelGameEngine.h](https://github.com/OneLoneCoder/olcPixelGameEngine)
 - [olcNoiseMaker.h](https://github.com/OneLoneCoder/synth) (**NOTE:** modified)

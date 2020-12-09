@@ -4,11 +4,13 @@
 #include "sfx.h"
 #include "Iir.h"
 #include <vector>
+#include "fft.h"
 
 
 // constants
 const int nChannels = 2;
 const int nSampleRate = 44100;
+
 
 // synth
 synth::instrument_single_osc instrument;
@@ -16,15 +18,17 @@ std::vector<synth::note> vNotes;
 std::mutex muxNotes;
 int nNoteOffset = 64;
 
+
 // filters
 bool bLpfEnabled = true;
 bool bHpfEnabled = true;
-FTYPE dHpfFrequency = 60.0;
-FTYPE dLpfFrequency = 1200.0;
-FTYPE dHpfQ = 0.5;
-FTYPE dLpfQ = 0.5;
+FTYPE dHpfFrequency = 100.0;
+FTYPE dLpfFrequency = 1500.0;
+FTYPE dHpfQ = 0.3;
+FTYPE dLpfQ = 0.7;
 Iir::RBJ::HighPass* hpFilters = nullptr;
 Iir::RBJ::LowPass* lpFilters = nullptr;
+
 
 // mono delay
 bool bMonoDelayEnabled = false;
@@ -33,6 +37,7 @@ FTYPE dDelayTime = 1.0;
 FTYPE dDelayFeedback = 0.6;
 float fDelayMix = 0.5f;
 
+
 // stereo ping pong delay
 bool bStereoDelayEnabled = false;
 sfx::pingpongdelay sfxPingPong{nSampleRate, 4.0};
@@ -40,12 +45,22 @@ sfx::pingpongdelay::stereo_sample ppDelayTime(0.3, 0.5);
 sfx::pingpongdelay::stereo_sample ppDelayFb(0.75, 0.75);
 float fPpDelayMix = 0.5f;
 
+
 // visualizer
+int nVisMode = 0;
 bool bVisEnabled = true;
 int nVisMemorySize = 0;
 FTYPE** dVisMemory = nullptr;
 int nVisPhase = 0;
 
+// visualizer / FFT
+int nFFTMemorySize = 1;
+int nFFTMemorySizeHalf = 1;
+FTYPE** dFFTMemoryPre = nullptr;
+FTYPE** dFFTMemoryPost = nullptr;
+std::mutex muxVis;
+int nFFTPhase = 0;
+std::mutex muxFFT;
 
 
 FTYPE ProcessChannel(int nChannel, FTYPE dTime)
@@ -88,8 +103,8 @@ void ProcessAllChannels(std::vector<FTYPE>& samples, FTYPE dTime)
     }
 
     // perform stereo processing (ping pong delay for now)
-    if (bStereoDelayEnabled)
-        sfxPingPong.process(samples, ppDelayTime, ppDelayFb, fPpDelayMix);
+    // if (bStereoDelayEnabled)
+    sfxPingPong.process(samples, ppDelayTime, ppDelayFb, bStereoDelayEnabled ? fPpDelayMix : 0.0f);
     
     // filters
     if (bHpfEnabled || bLpfEnabled)
@@ -104,14 +119,33 @@ void ProcessAllChannels(std::vector<FTYPE>& samples, FTYPE dTime)
     }
 
     // store samples in visualizer memory
-    if (bVisEnabled && dVisMemory != nullptr)
+    if (bVisEnabled && nVisMode == 0 && dVisMemory != nullptr)
     {
+        unique_lock<mutex> lm(muxVis);
         nVisPhase %= nVisMemorySize;
         for (int c = 0; c < samples.size(); c++)
+        {
             if (dVisMemory[c] != nullptr)
                 dVisMemory[c][nVisPhase] = samples[c];
+        }
         nVisPhase++;
     }
+
+    // store samples in FFT memory
+    if (bVisEnabled && nVisMode == 1 && dFFTMemoryPre != nullptr && dFFTMemoryPost != nullptr)
+    {
+        unique_lock<mutex> lm(muxFFT);
+        nFFTPhase %= nFFTMemorySize;
+        for (int c = 0; c < samples.size(); c++)
+        {
+            if (dFFTMemoryPre[c] != nullptr)
+                dFFTMemoryPre[c][nFFTPhase] = samples[c];
+            if (nFFTPhase == 0)
+                fft_magnitude(dFFTMemoryPre[c], dFFTMemoryPost[c], nFFTMemorySize);
+        }
+        nFFTPhase++;
+    }
+
 }
 
 
@@ -134,10 +168,18 @@ public:
         // setup visualizer
         nVisMemorySize = ScreenWidth();
         dVisMemory = new FTYPE*[nChannels];
+        nFFTMemorySize = ScreenWidth() * 2;
+        nFFTMemorySizeHalf = nFFTMemorySize / 2;
+        dFFTMemoryPre = new FTYPE*[nChannels];
+        dFFTMemoryPost = new FTYPE*[nChannels];
         for (int i = 0; i < nChannels; i++)
         {
             dVisMemory[i] = new FTYPE[nVisMemorySize];
+            dFFTMemoryPre[i] = new FTYPE[nFFTMemorySize];
+            dFFTMemoryPost[i] = new FTYPE[nFFTMemorySizeHalf];
             memset(&(dVisMemory[i])[0], 0.0, nVisMemorySize * sizeof(FTYPE));
+            memset(&(dFFTMemoryPre[i])[0], 0.0, nFFTMemorySize * sizeof(FTYPE));
+            memset(&(dFFTMemoryPost[i])[0], 0.0, nFFTMemorySizeHalf * sizeof(FTYPE));
         }
         bVisEnabled = true;
         
@@ -149,9 +191,14 @@ public:
         // cleanup visualizer
         bVisEnabled = false;
         for (int i = 0; i < nChannels; i++)
+        {
             delete[] dVisMemory[i];
+            delete[] dFFTMemoryPre[i];
+            delete[] dFFTMemoryPost[i];
+        }
         delete[] dVisMemory;
-
+        delete[] dFFTMemoryPre;
+        delete[] dFFTMemoryPost;
         return true;
     }
 
@@ -168,19 +215,50 @@ public:
         }
     }
 
+    void DrawFFT(FTYPE* mem, int yOffset, int yScale, const olc::Pixel& p = olc::RED)
+    {
+        olc::vi2d vPrevPixel;
+        for (int x = 0; x < ScreenWidth(); x++)
+        {
+            int wx = (int)(x * (double)nFFTMemorySizeHalf / (double)ScreenWidth());
+            FTYPE lx = -(wx / PI) * log10((nFFTMemorySizeHalf - wx) / (double)nFFTMemorySizeHalf);
+            int i = (int)std::min<FTYPE>(nFFTMemorySizeHalf - 1, std::max<FTYPE>(0, floor(lx)));
+            
+            int y = -mem[i] * 0.005 * yScale + yOffset;
+            if (x != 0)
+                DrawLine(vPrevPixel, { x, y }, p);
+            vPrevPixel = { x, y };
+        }
+    }
+
     bool OnUserUpdate(float fElapsedTime) override
     {
         if (!UpdateSound(fElapsedTime)) return false;
         if (!UpdateSFX(fElapsedTime)) return false;
 
+        if (GetKey(olc::TAB).bPressed)
+        {
+            nVisMode = (nVisMode == 0) ? 1 : 0;
+        }
+
         Clear(0);
 
         // visualizer
         for (int c = 0; c < nChannels; c++)
-        {
+        {          
+            muxVis.lock();
+            muxFFT.lock();
+
             int yScale = ScreenHeight() / nChannels - 50;
             int yOffset = (c + 1) * yScale - yScale / 2 + 100;
-            DrawVisualizer(dVisMemory[c], yOffset, yScale);
+            switch (nVisMode)
+            {
+            case 0: DrawVisualizer(dVisMemory[c], yOffset, yScale); break;
+            case 1: DrawFFT(dFFTMemoryPost[c], yOffset + c * 15 + 60, yScale); break;
+            }
+
+            muxVis.unlock();
+            muxFFT.unlock();
         }
 
         // ui
@@ -213,7 +291,7 @@ public:
         DrawString({ 10 + 200, 30 }, sStereoDelayStatus, bStereoDelayEnabled ? olc::WHITE : olc::GREY);
         DrawString({ 10, 50 }, sHPFStatus, bHpfEnabled ? olc::WHITE : olc::GREY);
         DrawString({ 10 + 200, 50 }, sLPFStatus, bLpfEnabled ? olc::WHITE : olc::GREY);
-        
+
         DrawString({ (int)(ScreenWidth() - sVolume.length() * 8 - 10), 10 }, sVolume);
         DrawString({ (int)(ScreenWidth() - sOctave.length() * 8 - 10), 30 }, sOctave);
 
