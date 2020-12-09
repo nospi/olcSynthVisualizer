@@ -25,6 +25,7 @@ namespace synth
     struct note
     {
         int id;
+        int offset;
         FTYPE on;
         FTYPE off;
         FTYPE velocity;
@@ -34,6 +35,7 @@ namespace synth
         note()
         {
             id = 0;
+            offset = 0;
             on = 0.0;
             off = 0.0;
             velocity = 0.7;

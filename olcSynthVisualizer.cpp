@@ -261,6 +261,16 @@ public:
             instrument.nHarmonics++;
         if (GetKey(olc::NP_SUB).bPressed)
             instrument.nHarmonics--;
+        if (GetKey(olc::NP_DIV).bPressed)
+            nNoteOffset -= 12;
+        if (GetKey(olc::NP_MUL).bPressed)
+            nNoteOffset += 12;
+        
+
+        if (nNoteOffset / 12 <= 1)
+            nNoteOffset = 16;
+        else if (nNoteOffset / 12 >= 10)
+            nNoteOffset = nNoteOffset = 124;
 
         if (instrument.nHarmonics < 1)
             instrument.nHarmonics = 1;
@@ -279,6 +289,7 @@ public:
                     // key is pressed, make a new note
                     synth::note n;
                     n.id = k + nNoteOffset;
+                    n.offset = nNoteOffset;
                     n.on = dTimeNow;
                     n.active = true;
                     n.channel = &instrument;
