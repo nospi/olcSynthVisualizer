@@ -84,32 +84,32 @@ FTYPE ProcessChannel(int nChannel, FTYPE dTime)
     return dMixedOutput * 0.2;
 }
 
-void ProcessAllChannels(std::vector<FTYPE>& samples, FTYPE dTime)
+void ProcessAllChannels(int nChans, FTYPE *samples, FTYPE dTime)
 {
     // perform mono processing per channel
-    for (int c = 0; c < samples.size(); c++)
+    for (int c = 0; c < nChans; c++)
         samples[c] = ProcessChannel(c, dTime);
     
     // mono delay
     if (bMonoDelayEnabled)
     {
         FTYPE dSummedOutput = 0.0;
-        for (int c = 0; c < samples.size(); c++)
+        for (int c = 0; c < nChans; c++)
             dSummedOutput += samples[c];
-        dSummedOutput = dSummedOutput / (FTYPE)samples.size();
+        dSummedOutput = dSummedOutput / (FTYPE)nChans;
         sfxMonoDelay.process(dSummedOutput, dDelayTime, dDelayFeedback, fDelayMix);
-        for (int c = 0; c < samples.size(); c++)
+        for (int c = 0; c < nChans; c++)
             samples[c] = dSummedOutput;
     }
 
     // perform stereo processing (ping pong delay for now)
     // if (bStereoDelayEnabled)
-    sfxPingPong.process(samples, ppDelayTime, ppDelayFb, bStereoDelayEnabled ? fPpDelayMix : 0.0f);
+    sfxPingPong.process(nChans, samples, ppDelayTime, ppDelayFb, bStereoDelayEnabled ? fPpDelayMix : 0.0f);
     
     // filters
     if (bHpfEnabled || bLpfEnabled)
     {
-        for (int c = 0; c < samples.size(); c++)
+        for (int c = 0; c < nChans; c++)
         {
             if (bHpfEnabled)
                 samples[c] = hpFilters[c].filter(samples[c]);
@@ -123,7 +123,7 @@ void ProcessAllChannels(std::vector<FTYPE>& samples, FTYPE dTime)
     {
         unique_lock<mutex> lm(muxVis);
         nVisPhase %= nVisMemorySize;
-        for (int c = 0; c < samples.size(); c++)
+        for (int c = 0; c < nChans; c++)
         {
             if (dVisMemory[c] != nullptr)
                 dVisMemory[c][nVisPhase] = samples[c];
@@ -136,7 +136,7 @@ void ProcessAllChannels(std::vector<FTYPE>& samples, FTYPE dTime)
     {
         unique_lock<mutex> lm(muxFFT);
         nFFTPhase %= nFFTMemorySize;
-        for (int c = 0; c < samples.size(); c++)
+        for (int c = 0; c < nChans; c++)
         {
             if (dFFTMemoryPre[c] != nullptr)
                 dFFTMemoryPre[c][nFFTPhase] = samples[c];
@@ -145,7 +145,6 @@ void ProcessAllChannels(std::vector<FTYPE>& samples, FTYPE dTime)
         }
         nFFTPhase++;
     }
-
 }
 
 
@@ -415,7 +414,7 @@ int main()
 {
     // setup noise maker
     vector<string> devices = olcNoiseMaker<short>::Enumerate();
-    olcNoiseMaker<short> sound(devices[0], nSampleRate, nChannels, 8, 2048);
+    olcNoiseMaker<short> sound(devices[0], nSampleRate, nChannels, 8, 1024);
     sound.SetUserFunctionAllChans(ProcessAllChannels);
 
     // setup filters

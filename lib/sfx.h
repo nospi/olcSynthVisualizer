@@ -85,9 +85,9 @@ namespace sfx
             }
         };
 
-        void process(std::vector<FTYPE>& samples, const stereo_sample& time, const stereo_sample& fb, const float& fMix = 1.0)
+        void process(int nChans, FTYPE *samples, const stereo_sample& time, const stereo_sample& fb, const float& fMix = 1.0)
         {
-            if (samples.size() < 2) return;
+            if (nChans < 2) return;
 
             stereo_sample in(samples[0], samples[1]);
 

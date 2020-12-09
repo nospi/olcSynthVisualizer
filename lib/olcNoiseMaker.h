@@ -204,8 +204,7 @@ public:
     }
 
 
-    // void SetUserFunctionAllChans(void(*func)(int, FTYPE*, FTYPE))
-    void SetUserFunctionAllChans(void(*func)(std::vector<FTYPE>&, FTYPE))
+    void SetUserFunctionAllChans(void(*func)(int, FTYPE*, FTYPE))
     {
         m_userFunctionAllChans = func;
     }
@@ -213,8 +212,7 @@ public:
 
 private:
     FTYPE(*m_userFunction)(int, FTYPE) = nullptr;
-    // void(*m_userFunctionAllChans)(int, FTYPE*, FTYPE);
-    void(*m_userFunctionAllChans)(std::vector<FTYPE>&, FTYPE) = nullptr;
+    void(*m_userFunctionAllChans)(int, FTYPE*, FTYPE);
 
     unsigned int m_nSampleRate;
     unsigned int m_nChannels;
@@ -303,15 +301,15 @@ private:
                 else
                 {
                     // User process (all channels)
-                    std::vector<FTYPE> samples;
-                    samples.resize(m_nChannels);
-                    m_userFunctionAllChans(samples, m_dGlobalTime);
+                    FTYPE *samples = new FTYPE[m_nChannels];
+                    m_userFunctionAllChans(m_nChannels, samples, m_dGlobalTime);
                     for (unsigned int c = 0; c < m_nChannels; c++)
                     {
                         nNewSample = (T)(clip(samples[c], 1.0) * dMaxSample);
                         m_pBlockMemory[nCurrentBlock + n + c] = nNewSample;
                         nPreviousSample = nNewSample;
                     }
+                    delete[] samples;
                 }
                 
                 m_dGlobalTime = m_dGlobalTime + dTimeStep;
