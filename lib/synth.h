@@ -8,6 +8,7 @@
 
 #include "olcNoiseMaker.h"
 #include "wavegen.h"
+#include "unordered_map"
 
 namespace synth
 {
@@ -56,23 +57,32 @@ namespace synth
         virtual FTYPE amplitude(const FTYPE& dTime, const FTYPE& dTimeOn, const FTYPE& dTimeOff, const FTYPE& dVelocity) = 0;
     };
 
+    enum class adsr_state
+    {
+        inactive,
+        attack,
+        decay,
+        sustain,
+        release
+    };
+
     struct envelope_adsr : envelope
     {
+        adsr_state state;
         FTYPE dAttackTime;
         FTYPE dDecayTime;
         FTYPE dSustainAmplitude;
         FTYPE dReleaseTime;
         FTYPE dStartAmplitude;
-        FTYPE dPreviousAmplitude;
 
         envelope_adsr()
         {
+            state = adsr_state::inactive;
             dAttackTime = 0.1;
             dDecayTime = 0.1;
             dSustainAmplitude = 1.0;
             dReleaseTime = 0.2;
             dStartAmplitude = 1.0;
-            dPreviousAmplitude = 0.0;
         }
 
         FTYPE amplitude(const FTYPE& dTime, const FTYPE& dTimeOn, const FTYPE& dTimeOff, const FTYPE& dVelocity) override
@@ -86,20 +96,25 @@ namespace synth
                 FTYPE dLifeTime = dTime - dTimeOn;
                 if (dLifeTime <= dAttackTime)
                 {
-                    dAmplitude = (dLifeTime / dAttackTime) * dStartAmplitude + 0.01;
-                    if (dPreviousAmplitude != 0.0)
-                        dAmplitude = (dAmplitude + dPreviousAmplitude) * 0.5;
-                        // dAmplitude = std::max(dAmplitude, dPreviousAmplitude);
+                    dAmplitude = std::max(0.0001, (dLifeTime / dAttackTime) * dStartAmplitude);
+                    state = adsr_state::attack;
                 }
                 if (dLifeTime > dAttackTime && dLifeTime <= (dAttackTime + dDecayTime))
+                {
                     dAmplitude = ((dLifeTime - dAttackTime) / dDecayTime) * (dSustainAmplitude - dStartAmplitude) + dStartAmplitude;
+                    state = adsr_state::decay;
+                }
                 if (dLifeTime > (dAttackTime + dDecayTime))
-                    dAmplitude = dSustainAmplitude;
+                {
+                    dAmplitude = dSustainAmplitude;                
+                    state = adsr_state::sustain;
+                }
             }
             else
             {
                 // note is OFF
                 FTYPE dLifeTime = dTimeOff - dTimeOn;
+                state = adsr_state::release;
                 if (dLifeTime <= dAttackTime)
                     dReleaseAmplitude = (dLifeTime / dAttackTime) * dStartAmplitude;
                 if (dLifeTime > dAttackTime && dLifeTime <= (dAttackTime + dDecayTime))
@@ -109,16 +124,13 @@ namespace synth
                 dAmplitude = ((dTime - dTimeOff) / dReleaseTime) * (0.0 - dReleaseAmplitude) + dReleaseAmplitude;
             }
 
-            // multiply by velocity
+            // multiply by velocity (disabled for now)
             // dAmplitude *= dVelocity;
 
             // amplitude should not be negative
-            if (dAmplitude <= 0.001)
+            if (dAmplitude <= 0.00001)
                 dAmplitude = 0.0;
-            
-            // don't forget to update the previous amplitude
-            dPreviousAmplitude = dAmplitude;
-            
+                        
             return dAmplitude;
         }
     };
@@ -135,6 +147,14 @@ namespace synth
         synth::envelope_adsr env;
         FTYPE dMaxLifeTime;
         wavegen::WaveFunction function;
+        std::unordered_map<int, FTYPE> mNoteAmplitudes;
+
+        instrument_base()
+        {
+            for (int i = 4; i < 124; i++)
+                mNoteAmplitudes.insert(std::make_pair(i, 0.0));
+        }
+
         virtual FTYPE sound(const FTYPE dTime, synth::note n, bool& bNoteFinished) = 0;
     };
 
@@ -156,9 +176,12 @@ namespace synth
         FTYPE sound(const FTYPE dTime, synth::note n, bool& bNoteFinished) override
         {
             FTYPE dAmplitude = synth::env(dTime, env, n.on, n.off, n.velocity);
+            if (n.channel->env.state == adsr_state::attack)
+                dAmplitude = std::max(dAmplitude, mNoteAmplitudes.at(n.id));
             if (dAmplitude <= 0.0)
                 bNoteFinished = true;
             FTYPE dSound = wavegen::Generate(function, synth::scale(n.id), dTime, dVolume, nHarmonics);
+            mNoteAmplitudes.at(n.id) = dAmplitude;
             return dSound * dAmplitude * dVolume;
         }
     };
