@@ -6,7 +6,6 @@
 #define FTYPE double
 #endif
 
-#include <memory>
 #include <stdexcept>
 #include <vector>
 
@@ -26,8 +25,7 @@ namespace sfx
         {
             nSampleRate = sampleRate;
             nMaxSamples = (int)(maxTime * nSampleRate);
-            memory = new FTYPE[nMaxSamples];
-            memset(memory, (FTYPE)0.0, nMaxSamples * sizeof(FTYPE));
+            memory = new FTYPE[nMaxSamples]{ 0.0 };
         }
 
         ~monodelay()
@@ -62,10 +60,8 @@ namespace sfx
         {
             nSampleRate = sampleRate;
             nMaxSamples = (int)(nSampleRate * maxTime);
-            memoryL = new FTYPE[nMaxSamples];
-            memoryR = new FTYPE[nMaxSamples];
-            memset(&memoryL[0], 0.0, nMaxSamples * sizeof(FTYPE));
-            memset(&memoryR[0], 0.0, nMaxSamples * sizeof(FTYPE));
+            memoryL = new FTYPE[nMaxSamples]{ 0.0 };
+            memoryR = new FTYPE[nMaxSamples]{ 0.0 };
         }
 
         ~pingpongdelay()
